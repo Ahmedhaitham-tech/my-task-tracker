@@ -75,6 +75,13 @@
   .custom{display:flex;gap:8px;margin-top:14px;align-items:center;font-size:.82rem;color:var(--muted);justify-content:center}
   .custom input{width:58px;padding:6px}
   .sessions{text-align:center;margin-top:12px;color:var(--muted);font-size:.85rem}
+  .hist-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .hist-head h2{margin:0}
+  .hist-sum{color:var(--muted);font-size:.85rem;margin-bottom:12px}
+  .hist-day{font-size:.8rem;font-weight:700;color:var(--accent);margin:14px 0 6px}
+  .hist-item{display:flex;gap:10px;align-items:center;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg);margin-bottom:6px;font-size:.9rem}
+  .hist-item .t{flex:1;min-width:0;word-break:break-word}
+  .hist-item .w{color:var(--muted);font-size:.78rem;white-space:nowrap}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--text);color:var(--bg);padding:12px 20px;border-radius:14px;transition:transform .3s;z-index:9}
   .toast.show{transform:translateX(-50%)}
 </style>
@@ -151,6 +158,15 @@
       <div class="sessions" id="sessions">Focus sessions today: 0</div>
     </div>
   </div>
+
+  <div class="card" style="margin-top:20px">
+    <div class="hist-head">
+      <h2>📜 History</h2>
+      <button class="chip" id="clearHist">Clear history</button>
+    </div>
+    <div class="hist-sum" id="histSum"></div>
+    <div id="histList"></div>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -195,7 +211,44 @@
 
   // ---------- Tasks ----------
   let tasks = load('fp_tasks',[]);
+  let history = load('fp_history',[]);
   let filter = 'all';
+
+  function saveHistory(){ if(history.length>500) history = history.slice(-500); save('fp_history',history); renderHistory(); }
+  function logTask(t){ history = history.filter(h=>h.id!==t.id); history.push({id:t.id,kind:'task',ttype:t.type,title:t.title,subject:t.subject||'',at:new Date().toISOString()}); saveHistory(); }
+  function unlogTask(t){ history = history.filter(h=>h.id!==t.id); saveHistory(); }
+  function logFocus(min){ history.push({id:'f'+Date.now(),kind:'focus',minutes:min,at:new Date().toISOString()}); saveHistory(); }
+  function dayKey(iso){ const d=new Date(iso); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+  function renderHistory(){
+    const box=$('histList'); box.innerHTML='';
+    const doneTasks = history.filter(h=>h.kind==='task').length;
+    const mins = history.filter(h=>h.kind==='focus').reduce((a,h)=>a+(h.minutes||0),0);
+    $('histSum').textContent = doneTasks+' completed · '+history.filter(h=>h.kind==='focus').length+' focus sessions · '+mins+' focus minutes in total';
+    if(!history.length){ box.innerHTML='<div class="empty">Your history will appear here as you finish tasks and focus sessions ✨</div>'; return; }
+    const items = history.slice().sort((a,b)=> a.at<b.at?1:-1);
+    let lastDay='';
+    items.forEach(h=>{
+      const dk=dayKey(h.at);
+      if(dk!==lastDay){
+        lastDay=dk;
+        const d=document.createElement('div'); d.className='hist-day';
+        d.textContent = dk===todayStr() ? 'Today' : new Date(h.at).toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+        box.appendChild(d);
+      }
+      const row=document.createElement('div'); row.className='hist-item';
+      const time=new Date(h.at).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+      row.innerHTML = h.kind==='focus'
+        ? '<span>⏱</span><span class="t">Focus session · '+h.minutes+' min</span><span class="w">'+time+'</span>'
+        : '<span>'+(h.ttype==='hw'?'📚':'✅')+'</span><span class="t">'+esc(h.title)+(h.subject?' <span class="w">· '+esc(h.subject)+'</span>':'')+'</span><span class="w">'+time+'</span>';
+      box.appendChild(row);
+    });
+  }
+  let clearArmed=false;
+  $('clearHist').onclick = () => {
+    if(!history.length){ toast('History is already empty'); return; }
+    if(!clearArmed){ clearArmed=true; $('clearHist').textContent='Click again to confirm'; setTimeout(()=>{ clearArmed=false; $('clearHist').textContent='Clear history'; },3500); return; }
+    clearArmed=false; $('clearHist').textContent='Clear history'; history=[]; saveHistory(); toast('History cleared 🧹');
+  };
   const pLabel = {high:'High',med:'Medium',low:'Low'};
 
   function render(){
@@ -224,6 +277,7 @@
         '<button class="del" title="Delete">✕</button>';
       li.querySelector('input').onchange = e => {
         t.done = e.target.checked; save('fp_tasks',tasks); render();
+        if(t.done) logTask(t); else unlogTask(t);
         if(t.done) toast(['Nice work! 🎉','Crushed it! 💥','One down! ✅','Proud of you! 🌟'][Math.floor(Math.random()*4)]);
       };
       li.querySelector('.del').onclick = () => { tasks = tasks.filter(x=>x.id!==t.id); save('fp_tasks',tasks); render(); };
@@ -258,6 +312,7 @@
     tasks = tasks.filter(t=>!t.done); save('fp_tasks',tasks); render(); toast('Completed items cleared 🧹');
   };
   render();
+  renderHistory();
 
   // ---------- Timer ----------
   const cfg = load('fp_timer',{focus:25,short:5,long:15});
@@ -291,7 +346,7 @@
     left = Math.max(0, Math.round((endAt-Date.now())/1000));
     if(left<=0){
       stop(); beep();
-      if(mode==='focus'){ sess.n++; save('fp_sessions',sess); toast('Focus session done! Take a break 🌿'); setMode(sess.n%4===0?'long':'short'); }
+      if(mode==='focus'){ sess.n++; save('fp_sessions',sess); logFocus(cfg.focus); toast('Focus session done! Take a break 🌿'); setMode(sess.n%4===0?'long':'short'); }
       else { toast('Break over. Ready to focus? 🚀'); setMode('focus'); }
       return;
     }

@@ -1,7 +1,7 @@
 // My Tracker - offline support
 // Change the version number below whenever you update the app files,
 // so phones/browsers drop the old saved copy.
-const CACHE = 'my-tracker-v1';
+const CACHE = 'my-tracker-v2';
 const FILES = [
   './',
   'index.html',

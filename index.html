@@ -51,7 +51,8 @@
   .chip{padding:6px 14px;border-radius:99px;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;font-size:.85rem}
   .chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
   ul{list-style:none;display:grid;gap:10px}
-  li.task{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--bg);animation:pop .25s}
+  li.task{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--bg)}
+  li.task.pop{animation:pop .25s}
   @keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
   li.task input[type=checkbox]{width:20px;height:20px;accent-color:var(--good);flex:none}
   .info{flex:1;min-width:0}
@@ -87,6 +88,18 @@
   .hist-item{display:flex;gap:10px;align-items:center;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg);margin-bottom:6px;font-size:.9rem}
   .hist-item .t{flex:1;min-width:0;word-break:break-word}
   .hist-item .w{color:var(--muted);font-size:.78rem;white-space:nowrap}
+  .subbtn{background:none;border:1px solid var(--line);color:var(--muted);border-radius:99px;padding:3px 10px;font-size:.75rem;cursor:pointer;white-space:nowrap}
+  .subbtn:hover{border-color:var(--accent);color:var(--accent)}
+  .subs{flex:1 1 100%;margin-left:32px;padding-left:14px;border-left:2px solid var(--line);display:grid;gap:6px}
+  .sub{display:flex;align-items:center;gap:10px;font-size:.9rem}
+  .sub input[type=checkbox]{width:16px;height:16px;accent-color:var(--good);flex:none}
+  .sub span{flex:1;min-width:0;word-break:break-word}
+  .sub.sdone span{text-decoration:line-through;color:var(--muted)}
+  .sub .sdel{background:none;border:none;color:var(--muted);cursor:pointer;font-size:.95rem}
+  .sub .sdel:hover{color:var(--bad)}
+  .subadd{display:flex;gap:8px;margin-top:2px}
+  .subadd input{padding:7px 10px;font-size:.85rem}
+  .subadd button{flex:none;padding:7px 14px;border-radius:10px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:600;font-size:.82rem}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--text);color:var(--bg);padding:12px 20px;border-radius:14px;transition:transform .3s;z-index:9}
   .toast.show{transform:translateX(-50%)}
 </style>
@@ -218,6 +231,8 @@
   let tasks = load('fp_tasks',[]);
   let history = load('fp_history',[]);
   let filter = 'all';
+  const openSubs = new Set();
+  let popId = null;
 
   function saveHistory(){ if(history.length>500) history = history.slice(-500); save('fp_history',history); renderHistory(); }
   function logTask(t){ history = history.filter(h=>h.id!==t.id); history.push({id:t.id,kind:'task',ttype:t.type,title:t.title,subject:t.subject||'',at:new Date().toISOString()}); saveHistory(); }
@@ -270,22 +285,56 @@
     if(!shown.length){ list.innerHTML='<div class="empty">Nothing here yet. Add something above ✨</div>'; }
     shown.forEach(t => {
       const li = document.createElement('li');
-      li.className = 'task'+(t.done?' done':'');
+      li.className = 'task'+(t.done?' done':'')+(t.id===popId?' pop':'');
       const overdue = t.due && !t.done && t.due < t0;
+      if(!Array.isArray(t.subs)) t.subs = [];
+      const subs = t.subs, sdone = subs.filter(s=>s.done).length, isOpen = openSubs.has(t.id);
+      li.dataset.id = t.id;
       li.innerHTML =
         '<input type="checkbox" '+(t.done?'checked':'')+'>'+
         '<div class="info"><div class="title">'+esc(t.title)+'</div>'+
         '<div class="meta"><span class="tag '+t.type+'">'+(t.type==='hw'?'Homework':'Task')+'</span>'+
         (t.subject?'<span>'+esc(t.subject)+'</span>':'')+
         (t.due?'<span class="'+(overdue?'overdue':'')+'">'+(overdue?'Overdue · ':'Due ')+t.due+'</span>':'')+
+        (subs.length?'<span>🌿 '+sdone+'/'+subs.length+' steps</span>':'')+
         '<span class="p-'+t.priority+'">● '+pLabel[t.priority]+'</span></div></div>'+
+        '<button class="subbtn" title="Sub-tasks (steps inside this task)">'+(isOpen?'▾':'▸')+' Steps</button>'+
         '<button class="del" title="Delete">✕</button>';
       li.querySelector('input').onchange = e => {
         t.done = e.target.checked; save('fp_tasks',tasks); render();
         if(t.done) logTask(t); else unlogTask(t);
         if(t.done) toast(['Nice work! 🎉','Crushed it! 💥','One down! ✅','Proud of you! 🌟'][Math.floor(Math.random()*4)]);
       };
-      li.querySelector('.del').onclick = () => { tasks = tasks.filter(x=>x.id!==t.id); save('fp_tasks',tasks); render(); };
+      li.querySelector('.del').onclick = () => { tasks = tasks.filter(x=>x.id!==t.id); openSubs.delete(t.id); save('fp_tasks',tasks); render(); };
+      li.querySelector('.subbtn').onclick = () => { if(openSubs.has(t.id)) openSubs.delete(t.id); else openSubs.add(t.id); render(); };
+      if(isOpen){
+        const box = document.createElement('div'); box.className = 'subs';
+        subs.forEach(s => {
+          const row = document.createElement('div'); row.className = 'sub'+(s.done?' sdone':'');
+          row.innerHTML = '<input type="checkbox" '+(s.done?'checked':'')+'><span>'+esc(s.text)+'</span><button class="sdel" title="Remove step">✕</button>';
+          row.querySelector('input').onchange = e => {
+            s.done = e.target.checked; save('fp_tasks',tasks); render();
+            if(subs.length && subs.every(x=>x.done) && !t.done) toast('All steps done! Tick the main task ✅');
+          };
+          row.querySelector('.sdel').onclick = () => { t.subs = t.subs.filter(x=>x.id!==s.id); save('fp_tasks',tasks); render(); };
+          box.appendChild(row);
+        });
+        const add = document.createElement('div'); add.className = 'subadd';
+        add.innerHTML = '<input placeholder="Add a step inside this task…" maxlength="100"><button type="button">Add</button>';
+        const inp = add.querySelector('input');
+        const addSub = () => {
+          const text = inp.value.trim();
+          if(!text){ toast('Type the step first ✍️'); inp.focus(); return; }
+          t.subs.push({ id:Date.now()+Math.random(), text, done:false });
+          save('fp_tasks',tasks); render();
+          const again = [...$('list').children].find(x=>x.dataset.id===String(t.id));
+          if(again){ const i2 = again.querySelector('.subadd input'); if(i2) i2.focus(); }
+        };
+        add.querySelector('button').onclick = addSub;
+        inp.addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); addSub(); } });
+        box.appendChild(add);
+        li.appendChild(box);
+      }
       list.appendChild(li);
     });
     const done = tasks.filter(t=>t.done).length;
@@ -298,7 +347,9 @@
   function addTask(){
     const title = $('title').value.trim();
     if(!title){ toast('Type what you need to do first ✍️'); $('title').focus(); return; }
-    tasks.push({ id:Date.now()+Math.random(), title, type:$('type').value, subject:$('subject').value.trim(), due:$('due').value, priority:$('priority').value, done:false });
+    const nt = { id:Date.now()+Math.random(), title, type:$('type').value, subject:$('subject').value.trim(), due:$('due').value, priority:$('priority').value, done:false, subs:[] };
+    tasks.push(nt);
+    openSubs.clear(); openSubs.add(nt.id); popId = nt.id;
     save('fp_tasks',tasks);
     $('title').value=''; $('subject').value=''; $('due').value='';
     render(); $('title').focus();
